@@ -1,7 +1,13 @@
+# Datset information 
+datasets/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+
+# MacOS files 
+.DS_Store
 
 # C extensions
 *.so
