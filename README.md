@@ -7,23 +7,32 @@ git clone git@github.com:njanne19/skin-classification-cv.git
 ```
 2. Install the required packages (preferably in a [virtual environment](https://docs.python.org/3/library/venv.html))
 ```
+pythom -m venv env
+source ./env/bin/activate
 pip install -r requirements.txt
 ```
-3. Install this repository as a local, editable python package
+3. Install this repository as a local, editable python package. This will allow you to run commands like `python skin-classification-cv/kmeans', for example. 
 ```
 pip install -e .
 ```
-4. Download the dataset from [here](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/DBW86T) and extract the contents into the `data` directory. The directory structure should look like this:
+4. Run the dataset installation script
 ```
-data
-├── HAM10000_images_part_1
-├── HAM10000_images_part_2
-├── HAM10000_metadata.csv
-└── hmnist_28_28_RGB.csv
+./install_dataset.sh
 ```
-5. Run the `test_config.py` script to verify everything has been installed correctly. 
+**Note:** If you receive an error that permission is denied, retry running the command with `sudo`. If you receive an error that `./install_dataset.sh` is not a command, mark the file as executible with `sudo chmod +x ./install_dataset.sh` and try again. 
+
+At the end of this procedure, you should have the following file structure: 
+
 ```
-python test_config.py
+skin-classification-cv/
+├─ datasets/
+│  ├─ HAM_10000/
+│  │  ├─ HAM10000_metadata.csv
+│  │  ├─ ISIC_0024306.jpg
+│  │  ├─ ISIC_0024307.jpg
+│  │  ├─ ... (all other images) 
+├─ skin-classification-cv (where our code will go)/
+├─ ... (all other package files, like setup.py)
 ```
 
 ## Introduction
