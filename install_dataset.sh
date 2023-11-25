@@ -49,6 +49,19 @@ if [ ! -d "$DATASET_DIR$HAM_10000_DATASET_FOLDER" ]; then
     echo "Downloading HAM10000_metadata.csv ..."
     wget --show-progress --progress=bar:force https://dataverse.harvard.edu/api/access/datafile/3172582?format=original -O "$DATASET_DIR$HAM_10000_DATASET_FOLDER/HAM10000_metadata.csv"
 
+    # Check to see if the images have been downloaded correctly
+    # Count the number of jpgs in the folder we unzipped files to 
+    # and compare it to the number of jpgs in the metadata file
+    echo "Checking to see if the dataset was downloaded correctly..."
+    NUM_IMAGES=$(ls "$DATASET_DIR$HAM_10000_DATASET_FOLDER" | grep -c jpg)
+    echo "Found $NUM_IMAGES images in the HAM_10000 dataset folder." 
+    if [ "$NUM_IMAGES" -eq 10015 ]; then
+        echo "The dataset was downloaded correctly!"
+    else
+        echo "The dataset was not downloaded correctly. Please try again."
+        exit 1
+    fi
+
 else
     echo "HAM10000 dataset folder found!" 
     echo "Skipping download..."
