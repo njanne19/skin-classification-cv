@@ -1,5 +1,6 @@
 import numpy as np 
 import torch 
+import os 
 import torchvision 
 import time 
 import logging 
@@ -51,6 +52,10 @@ class SkinVGGTrainer:
         # If the optimizer is not provided, use Adam.
         if self.optimizer is None:
             self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+            
+        # Check to see if weights folder isn't added. If it's not, create before training
+        if not os.path.exists('./models/vgg/weights'):
+            os.makedirs('./models/vgg/weights')
             
         # Add logging config 
         logging.basicConfig(level=logging.INFO)
