@@ -43,6 +43,30 @@ class ImageNetDataset(Dataset):
                 transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
             ])
+            
+        # Get number of unique classes to vectorize labels
+        self.classes = self.data_frame.iloc[:, 2].unique()
+        self.num_classes = len(self.classes)
+        
+    def class_label_to_class_vector(self, label):
+        # Find the index of the label in the classes array 
+        idx = np.where(self.classes == label)[0][0]
+        
+        # Create a vector of zeros of length num_classes
+        vec = np.zeros(self.num_classes)
+        
+        # Set the index of the label to 1
+        vec[idx] = 1
+        
+        # Return vector to user
+        return vec
+    
+    def class_vector_to_class_label(self, vec):
+        # Pic the idx of the max value in the vector
+        idx = np.argmax(vec)
+        
+        # Return the class label at that index
+        return self.classes[idx]
 
     def __len__(self):
         return len(self.data_frame)
@@ -55,7 +79,7 @@ class ImageNetDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        return image, label
+        return image, self.class_label_to_class_vector(label)
 
 
 if __name__ == "__main__": 
@@ -84,8 +108,11 @@ if __name__ == "__main__":
     # Indexing an element
     img, label = dataset[0]  # Get the first image and label
 
+    print(dataset.classes)
+    print(label)
+
     # Displaying the image
-    imshow(img, title=label)
+    imshow(img, title=str(label))
 
     # Displaying multiple images
     fig = plt.figure(figsize=(25, 4))
@@ -97,9 +124,12 @@ if __name__ == "__main__":
     for idx, dataset_idx in enumerate(random_indices):
         img, label = dataset[dataset_idx]
         ax = fig.add_subplot(1, 5, idx + 1, xticks=[], yticks=[])
-        imshow(img, title=label)
+        imshow(img, title=str(dataset.class_vector_to_class_label(label)))
         
     # Hold the window open 
     plt.show()
+    
+    # Print cwd 
+    print(os.getcwd())
 
     
