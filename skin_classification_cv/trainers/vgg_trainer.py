@@ -7,6 +7,8 @@ import logging
 import warnings 
 from skin_classification_cv.models.vgg import SkinVGG
 from skin_classification_cv.loaders.imagenet_loader import ImageNetDataset
+from tensorboardX import SummaryWriter
+from datetime import datetime
 
 """
     SkinVGGTrainer is a class that encapsulates the training and evaluation of the SkinVGG model.
@@ -53,15 +55,21 @@ class SkinVGGTrainer:
         if self.optimizer is None:
             self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
             
-        # Check to see if weights folder isn't added. If it's not, create before training
-        if not os.path.exists('./models/vgg/weights'):
-            os.makedirs('./models/vgg/weights')
+        # Check to see if there is a weights folder, a runs folder 
+        # if not, create them 
+        if not os.path.exists('./skin_classification_cv/models/vgg/weights'):
+            # Create this directory 
+            os.makedirs('./skin_classification_cv/models/vgg/weights')
+            
+        if not os.path.exists('./skin_classification_cv/models/vgg/runs'):
+            # Create this directory 
+            os.makedirs('./skin_classification_cv/models/vgg/runs')
             
         # Add logging config 
         logging.basicConfig(level=logging.INFO)
         
         
-    def fit(self, epochs=10, show=True, update_step=1): 
+    def fit(self, epochs=10, show=True, update_step=1, writer=None): 
         """
         fit is a function that encapsulates the training loop for the model. 
         """
@@ -78,21 +86,27 @@ class SkinVGGTrainer:
             start_time = time.time()
             
             # Train the model 
-            tr_loss = self._train(self.train_loader, epoch)
+            tr_stats = self._train(self.train_loader, epoch)
             
             # Validate the model 
-            val_loss = self._validate(self.val_loader)
+            val_loss, val_stats = self._validate(self.val_loader)
             
             # Calculate the epoch time 
             epoch_time = time.time() - start_time
             
             # Log the results 
-            self._logger(tr_loss, val_loss, epoch, epochs, epoch_time, show, update_step)
+            self._logger(tr_stats, val_stats, epoch, epochs, epoch_time, show, update_step)
+            
+            # Add to tensorboard as well if writer is provided 
+            if writer is not None:
+                writer.add_scalar('Loss/train', tr_stats['loss'], epoch)
+                writer.add_scalar('Loss/val', val_stats['loss'], epoch)
+                writer.add_scalar('Acc/val', val_stats['acc'], epoch)
             
             # Save the model if the validation loss is the best we've seen so far
             if val_loss < best_val_loss: 
                 best_val_loss = val_loss
-                torch.save(self.model.state_dict(), './models/vgg/weights/best_model.pt')
+                torch.save(self.model.state_dict(), './skin_classification_cv/models/vgg/weights/best_model.pt')
                 
         
         # Print total time of training
@@ -122,6 +136,9 @@ class SkinVGGTrainer:
         # Iterate over the data loader
         for batch_idx, (features, labels) in enumerate(loader): 
             
+            # Move the data to the right device 
+            features = features.to(self.device) 
+            labels = labels.to(self.device)
             
             # Write a print statement that shows the current batch being trained, the total number of batches
             # and the current loss for the batch. Print in place so as the for loop iterates the loss is updated 
@@ -146,10 +163,13 @@ class SkinVGGTrainer:
             # Update the weights
             self.optimizer.step()
             
+        # Create a dictionary of the training statistics
+        tr_stats = {
+            'loss': running_loss
+        }
             
-    
         # Return the loss back to the caller. 
-        return running_loss
+        return tr_stats
     
     def _validate(self, loader): 
         """
@@ -162,9 +182,18 @@ class SkinVGGTrainer:
         # Keep a running loss total
         running_loss = 0.0
         
+        # Keep a running accuraccy total as well
+        num_correct = 0
+        total_samples = 0
+        
         with torch.no_grad(): 
             # Iterate over the data loader
             for features, labels in loader: 
+                
+                # Move the data to the right device
+                features = features.to(self.device)
+                labels = labels.to(self.device)
+                
                 # Forward pass 
                 out = self.model(features) 
 
@@ -174,23 +203,54 @@ class SkinVGGTrainer:
                 # Add the loss to the running loss total
                 running_loss += loss.item()
                 
+                # Add num correct and total samples
+                _, preds = torch.max(out, 1)
+                num_correct += torch.sum(preds == labels.data)
+                total_samples += preds.size(0)
+            
+        # Calculate the accuracy 
+        acc = num_correct / total_samples
+        
+        # Create a dictionary of the validation statistics
+        val_stats = {
+            'loss': running_loss,
+            'acc': acc, 
+            'num_correct': num_correct,
+            'total_samples': total_samples
+        }
+                
         # Return the loss back to the caller. 
-        return running_loss
+        return val_stats
     
     
-    def _logger(self, tr_loss, val_loss, epoch, epochs, epoch_time, show=True, update_step=20): 
+    def _logger(self, tr_stats, val_stats, epoch, epochs, epoch_time, show=True, update_step=20): 
         """
         _logger is a private function that encapsulates the logging functionality for the model.
         """
         
         if show: 
             if epoch % update_step == 0 or epoch == 1: 
-                msg = f"Epoch: {epoch}/{epochs} | Train Loss: {tr_loss:.4f} | Val Loss: {val_loss:.4f} | Epoch Time: {epoch_time:.2f}s"
+                
+                # Create the message to log
+                msg = f"Epoch: {epoch}/{epochs} | Train Loss: \
+                {tr_stats['loss']:.4f} | Val Loss: {val_stats['loss']:.4f} | \
+                | Val Acc: {val_stats['acc']:.2f}% ({val_stats['num_correct']} / {val_stats['total_samples']}) | \
+                Epoch Time: {epoch_time:.2f}s"
+                
                 logging.info(msg)
             
             
 # Test to see if training worked 
 if __name__ == "__main__": 
+        
+    # Create the logfile for this specific run 
+    current_time = datetime.now().strftime('%Y%m%d-%H%M%S')
+    
+    # Append the datetime string to the logfile 
+    log_dir = f'skin_classification_cv/models/vgg/runs/training-{current_time}'
+    
+    # Initialize the summary writer 
+    writer = SummaryWriter(log_dir)
     
     # Set the random seed for reproducibility
     torch.manual_seed(42)
@@ -206,6 +266,12 @@ if __name__ == "__main__":
     # Create the model based on number of skin classes
     skin_vgg = SkinVGG(dataset.num_classes)
     
+    # Load the best model weights if they already exist
+    if os.path.exists('./skin_classification_cv/models/vgg/weights/best_model.pt'): 
+        print("Found best weights @ ./skin_classification_cv/models/vgg/weights/best_model.pt")
+        print("loading weights...")
+        skin_vgg.load_state_dict(torch.load('./skin_classification_cv/models/vgg/weights/best_model.pt'))
+    
     # Create the data loaders 
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=32, shuffle=True)
@@ -215,40 +281,13 @@ if __name__ == "__main__":
     trainer = SkinVGGTrainer(skin_vgg, train_loader, test_loader, val_loader)
     
     # Train the model 
-    trainer.fit(epochs=10, show=True, update_step=1)
+    trainer.fit(epochs=10, show=True, update_step=1, writer=writer)
     
-    # Save the model 
-    torch.save(skin_vgg.state_dict(), './models/vgg/weights/model.pt')
-    
-    # Load the model 
-    skin_vgg.load_state_dict(torch.load('./models/vgg/weights/model.pt'))
-    
-    # Evaluate the model 
-    trainer._validate(test_loader)
-    
-    # Test the model 
-    
-    # Create test loss and accuracy variables
-    test_loss = 0.0
-    test_acc = 0.0
-    
-    # Put the model into eval mode
-    skin_vgg.eval()
-    with torch.no_grad(): 
-        # Then test the model and record statistics
-        for features, labels in test_loader: 
-            # Forward pass 
-            out = skin_vgg(features) 
-            
-            # Calculate the loss 
-            loss = trainer.criterion(out, labels)
-            
-            # Add the loss to the running loss total
-            test_loss += loss.item()
-            
-            # Calculate the accuracy 
-            _, preds = torch.max(out, 1)
-            test_acc += torch.sum(preds == labels.data)
+    # Evaluate the model on the test set
+    test_stats = trainer._validate(test_loader)
+
     
     # Print the results 
-    print(f"Test Loss: {test_loss/len(test_loader):.4f} | Test Acc: {test_acc/len(test_loader):.4f}")
+    print(f"Test Loss: {test_stats['loss']:.4f} | \
+        Test Acc: {test_stats['acc']:.4f} \
+        ({test_stats['num_correct']}/{test_stats['total_samples']})")
