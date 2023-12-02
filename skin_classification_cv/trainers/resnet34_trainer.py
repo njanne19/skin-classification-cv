@@ -6,23 +6,24 @@ import pdb
 import time 
 import logging 
 import warnings 
-from skin_classification_cv.models.vgg import SkinVGG
+from skin_classification_cv.models.resnet34 import SkinResNet34
 from skin_classification_cv.loaders.imagenet_loader import ImageNetDataset
+from sklearn.model_selection import KFold
 from tensorboardX import SummaryWriter
 from datetime import datetime
 
 """
-    SkinVGGTrainer is a class that encapsulates the training and evaluation of the SkinVGG model.
+    SkinResNet34Trainer is a class that encapsulates the training and evaluation of the SkinResNet34 model.
     It can be used to train the model, and evaluate it on a validation set, and save weights for future testing. 
 """
-class SkinVGGTrainer:
+class SkinResNet34Trainer:
     def __init__(self, model, train_loader, test_loader, val_loader=None, criterion=None, optimizer=None, scheduler=None, device=None):
         """
-        SkinVGGTrainer is a class that encapsulates the training and evaluation of the SkinVGG model.
+        SkinResNet34Trainer is a class that encapsulates the training and evaluation of the SkinResNet34 model.
         It can be used to train the model, and evaluate it on a validation set, and save weights for future testing.
         
         Args:
-            model (SkinVGG): The SkinVGG model to train and evaluate. 
+            model (SkinResNet34): The SkinResNet34 model to train and evaluate. 
             train_loader (DataLoader): The DataLoader object that loads the training data. 
             test_loader (DataLoader): The DataLoader object that loads the test data. 
             val_loader (DataLoader): The DataLoader object that loads the validation data. 
@@ -58,13 +59,13 @@ class SkinVGGTrainer:
             
         # Check to see if there is a weights folder, a runs folder 
         # if not, create them 
-        if not os.path.exists('./skin_classification_cv/models/vgg/weights'):
+        if not os.path.exists('./skin_classification_cv/models/resnet34/weights'):
             # Create this directory 
-            os.makedirs('./skin_classification_cv/models/vgg/weights')
+            os.makedirs('./skin_classification_cv/models/resnet34/weights')
             
-        if not os.path.exists('./skin_classification_cv/models/vgg/runs'):
+        if not os.path.exists('./skin_classification_cv/models/resnet34/runs'):
             # Create this directory 
-            os.makedirs('./skin_classification_cv/models/vgg/runs')
+            os.makedirs('./skin_classification_cv/models/resnet34/runs')
             
         # Add logging config 
         logging.basicConfig(level=logging.INFO)
@@ -108,7 +109,7 @@ class SkinVGGTrainer:
             # Save the model if the validation loss is the best we've seen so far
             if val_stats['loss'] < best_val_loss: 
                 best_val_loss = val_stats['loss']
-                torch.save(self.model.state_dict(), './skin_classification_cv/models/vgg/weights/best_model.pt')
+                torch.save(self.model.state_dict(), './skin_classification_cv/models/resnet34/weights/best_model.pt')
                 
         
         # Print total time of training
@@ -143,8 +144,9 @@ class SkinVGGTrainer:
             labels = labels.to(self.device)
         
             
-            # Zero the gradients
-            self.optimizer.zero_grad()
+            # Zero the gradients, apparently this way is better than zero_grad()
+            for param in self.model.parameters():
+                param.grad = None
 
             # Forward pass 
             out = self.model(features) 
@@ -228,6 +230,43 @@ class SkinVGGTrainer:
         # Return the loss back to the caller. 
         return val_stats
     
+    def k_fold_train(self, dataset, k=5, epochs=10, show=True, update_step=1, writer=None):
+        kfold = KFold(n_splits=k, shuffle=True, random_state=42)
+        fold_performance = []
+
+        for fold, (train_ids, val_ids) in enumerate(kfold.split(dataset)):
+            print(f'FOLD {fold}')
+            print('--------------------------------')
+
+            # Sample elements randomly from a given list of ids, no replacement.
+            train_subsampler = torch.utils.data.SubsetRandomSampler(train_ids)
+            val_subsampler = torch.utils.data.SubsetRandomSampler(val_ids)
+
+            # Define data loaders for training and validation phases
+            train_loader = torch.utils.data.DataLoader(dataset, batch_size=32, sampler=train_subsampler, num_workers=6, pin_memory=True)
+            val_loader = torch.utils.data.DataLoader(dataset, batch_size=32, sampler=val_subsampler, num_workers=6, pin_memory=True)
+
+            # Set data loaders
+            self.train_loader = train_loader
+            self.val_loader = val_loader
+
+            # Fit model
+            model = self.fit(epochs, show=show, update_step=update_step, writer=writer)
+
+            # Evaluate and store performance
+            val_stats = self._validate(self.val_loader)
+            fold_performance.append(val_stats['acc'])
+
+            print(f"Fold {fold} Accuracy: {val_stats['acc']}%")
+        
+        print(f'K-FOLD CROSS VALIDATION RESULTS FOR {k} FOLDS')
+        print('--------------------------------')
+        sum = 0.0
+        for idx, accuracy in enumerate(fold_performance):
+            print(f'Fold {idx}: {accuracy} %')
+            sum += accuracy
+        print(f'Average: {sum/len(fold_performance)} %')
+    
     
     def _logger(self, tr_stats, val_stats, epoch, epochs, epoch_time, show=True, update_step=20): 
         """
@@ -252,7 +291,7 @@ if __name__ == "__main__":
     current_time = datetime.now().strftime('%Y%m%d-%H%M%S')
     
     # Append the datetime string to the logfile 
-    log_dir = f'skin_classification_cv/models/vgg/runs/training-{current_time}'
+    log_dir = f'skin_classification_cv/models/resnet34/runs/training-{current_time}'
     
     # Initialize the summary writer 
     writer = SummaryWriter(log_dir)
@@ -266,27 +305,30 @@ if __name__ == "__main__":
     
     # Split the dataset into train, test, and validation sets
     # into 80%, 10%, and 10% respectively.
-    train_set, test_set, val_set = torch.utils.data.random_split(dataset, [0.8, 0.1, 0.1], generator=generator)
+    train_set, test_set = torch.utils.data.random_split(dataset, [0.9, 0.1], generator=generator)
     
     # Create the model based on number of skin classes
-    skin_vgg = SkinVGG(dataset.num_classes)
+    skin_resnet34 = SkinResNet34(dataset.num_classes)
     
     # Load the best model weights if they already exist
-    if os.path.exists('./skin_classification_cv/models/vgg/weights/best_model.pt'): 
-        print("Found best weights @ ./skin_classification_cv/models/vgg/weights/best_model.pt")
+    if os.path.exists('./skin_classification_cv/models/resnet34/weights/best_model.pt'): 
+        print("Found best weights @ ./skin_classification_cv/models/resnet34/weights/best_model.pt")
         print("loading weights...")
-        skin_vgg.load_state_dict(torch.load('./skin_classification_cv/models/vgg/weights/best_model.pt'))
+        skin_resnet34.load_state_dict(torch.load('./skin_classification_cv/models/resnet34/weights/best_model.pt'))
     
     # Create the data loaders 
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=32, shuffle=True)
-    val_loader = torch.utils.data.DataLoader(val_set, batch_size=32, shuffle=True)
+    # Options after shuffle may only work on GPU. If this is causing errors, remove them. 
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True, num_workers=6, pin_memory=True)
+    test_loader = torch.utils.data.DataLoader(test_set, batch_size=32, shuffle=True, num_workers=6, pin_memory=True)
     
     # Create the trainer 
-    trainer = SkinVGGTrainer(skin_vgg, train_loader, test_loader, val_loader)
+    trainer = SkinResNet34Trainer(skin_resnet34, None, test_loader, None)
     
     # Train the model 
-    trainer.fit(epochs=100, show=True, update_step=1, writer=writer)
+    trainer.k_fold_train(train_set, epochs=100, show=True, update_step=1, writer=writer)
+
+    # Load in the best model
+    skin_resnet34.load_state_dict(torch.load('./skin_classification_cv/models/resnet34/weights/best_model.pt'))
     
     # Evaluate the model on the test set
     test_stats = trainer._validate(test_loader)
