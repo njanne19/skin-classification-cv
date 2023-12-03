@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 import numpy as np
 
 class ImageNetDataset(Dataset):
-    def __init__(self, dir, metadata_file='HAM10000_metadata.csv', transform=None):
+    def __init__(self, dir, metadata_file='HAM10000_metadata.csv', transform=None, augment_factor=int(1)):
         """
         ImageNetDataset is an adapter class that loads images from 
         the downloaded dataset and adapts them to the standard ImageNet format 
@@ -44,6 +44,22 @@ class ImageNetDataset(Dataset):
                 transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
             ])
+
+        # Create augmented transform to do data augmentation to increase the ratio of the dataset 
+        self.augment_transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(),
+            transforms.RandomRotation(20),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])            
+        ])
+
+        # This is the factor we multiply by the length of the original dataset 
+        # To get an augmented dataset. At the end, the resulting dataset will be 
+        # of length len(original_dataset) * augment_factor
+        self.augment_factor = augment_factor
             
         # Get number of unique classes to vectorize labels
         self.classes = self.data_frame.iloc[:, 2].unique()
@@ -62,15 +78,36 @@ class ImageNetDataset(Dataset):
         return {class_label: self.class_label_to_class_number(class_label) for class_label in self.classes}
 
     def __len__(self):
-        return len(self.data_frame)
+        return len(self.data_frame) * self.augment_factor
 
     def __getitem__(self, idx):
-        img_name = os.path.join(self.img_dir, (self.data_frame.iloc[idx, 1] + '.jpg'))
-        image = Image.open(img_name).convert('RGB')
-        label = self.data_frame.iloc[idx, 2]
 
-        if self.transform:
-            image = self.transform(image)
+        # Check to see if we're doing augmentation or not
+        # This is normal mode
+        if self.augment_factor == 1:
+            img_name = os.path.join(self.img_dir, (self.data_frame.iloc[idx, 1] + '.jpg'))
+            image = Image.open(img_name).convert('RGB')
+            label = self.data_frame.iloc[idx, 2]
+
+            if self.transform:
+                image = self.transform(image)
+
+            return image, self.class_label_to_class_number(label)
+        
+        else: 
+            # Calculate the original index of the image 
+            original_idx = idx % len(self.data_frame) 
+
+            # Get the image name and label
+            img_name = os.path.join(self.img_dir, (self.data_frame.iloc[original_idx, 1] + '.jpg'))
+            image = Image.open(img_name).convert('RGB')
+            label = self.data_frame.iloc[original_idx, 2]
+
+            # Apply the augmentation transform to images after the original index length
+            if idx >= len(self.data_frame):
+                image = self.augment_transform(image)
+            else: 
+                image = self.transform(image)
 
         return image, self.class_label_to_class_number(label)
 

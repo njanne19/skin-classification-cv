@@ -8,6 +8,7 @@ import logging
 import warnings 
 from skin_classification_cv.models.vgg import SkinVGG
 from skin_classification_cv.loaders.imagenet_loader import ImageNetDataset
+from sklearn.model_selection import KFold
 from tensorboardX import SummaryWriter
 from datetime import datetime
 
@@ -143,8 +144,9 @@ class SkinVGGTrainer:
             labels = labels.to(self.device)
         
             
-            # Zero the gradients
-            self.optimizer.zero_grad()
+            # Zero the gradients, apparently this way is better than zero_grad()
+            for param in self.model.parameters():
+                param.grad = None
 
             # Forward pass 
             out = self.model(features) 
@@ -228,6 +230,43 @@ class SkinVGGTrainer:
         # Return the loss back to the caller. 
         return val_stats
     
+    def k_fold_train(self, dataset, k=5, epochs=10, show=True, update_step=1, writer=None):
+        kfold = KFold(n_splits=k, shuffle=True, random_state=42)
+        fold_performance = []
+
+        for fold, (train_ids, val_ids) in enumerate(kfold.split(dataset)):
+            print(f'FOLD {fold}')
+            print('--------------------------------')
+
+            # Sample elements randomly from a given list of ids, no replacement.
+            train_subsampler = torch.utils.data.SubsetRandomSampler(train_ids)
+            val_subsampler = torch.utils.data.SubsetRandomSampler(val_ids)
+
+            # Define data loaders for training and validation phases
+            train_loader = torch.utils.data.DataLoader(dataset, batch_size=32, sampler=train_subsampler, num_workers=6, pin_memory=True)
+            val_loader = torch.utils.data.DataLoader(dataset, batch_size=32, sampler=val_subsampler, num_workers=6, pin_memory=True)
+
+            # Set data loaders
+            self.train_loader = train_loader
+            self.val_loader = val_loader
+
+            # Fit model
+            model = self.fit(epochs, show=show, update_step=update_step, writer=writer)
+
+            # Evaluate and store performance
+            val_stats = self._validate(self.val_loader)
+            fold_performance.append(val_stats['acc'])
+
+            print(f"Fold {fold} Accuracy: {val_stats['acc']}%")
+        
+        print(f'K-FOLD CROSS VALIDATION RESULTS FOR {k} FOLDS')
+        print('--------------------------------')
+        sum = 0.0
+        for idx, accuracy in enumerate(fold_performance):
+            print(f'Fold {idx}: {accuracy} %')
+            sum += accuracy
+        print(f'Average: {sum/len(fold_performance)} %')
+    
     
     def _logger(self, tr_stats, val_stats, epoch, epochs, epoch_time, show=True, update_step=20): 
         """
@@ -262,11 +301,11 @@ if __name__ == "__main__":
     generator = torch.Generator().manual_seed(42)
     
     # First load in HAM10000 and split datasets 
-    dataset = ImageNetDataset('datasets/HAM_10000') 
+    dataset = ImageNetDataset('datasets/HAM_10000', augment_factor=int(2)) 
     
     # Split the dataset into train, test, and validation sets
     # into 80%, 10%, and 10% respectively.
-    train_set, test_set, val_set = torch.utils.data.random_split(dataset, [0.8, 0.1, 0.1], generator=generator)
+    train_set, test_set = torch.utils.data.random_split(dataset, [0.9, 0.1], generator=generator)
     
     # Create the model based on number of skin classes
     skin_vgg = SkinVGG(dataset.num_classes)
@@ -278,15 +317,18 @@ if __name__ == "__main__":
         skin_vgg.load_state_dict(torch.load('./skin_classification_cv/models/vgg/weights/best_model.pt'))
     
     # Create the data loaders 
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=32, shuffle=True)
-    val_loader = torch.utils.data.DataLoader(val_set, batch_size=32, shuffle=True)
+    # Options after shuffle may only work on GPU. If this is causing errors, remove them. 
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True, num_workers=6, pin_memory=True)
+    test_loader = torch.utils.data.DataLoader(test_set, batch_size=32, shuffle=True, num_workers=6, pin_memory=True)
     
     # Create the trainer 
-    trainer = SkinVGGTrainer(skin_vgg, train_loader, test_loader, val_loader)
+    trainer = SkinVGGTrainer(skin_vgg, None, test_loader, None)
     
     # Train the model 
-    trainer.fit(epochs=100, show=True, update_step=1, writer=writer)
+    trainer.k_fold_train(train_set, epochs=100, show=True, update_step=1, writer=writer)
+
+    # Load in the best model 
+    skin_vgg.load_state_dict(torch.load('./skin_classification_cv/models/vgg/weights/best_model.pt'))
     
     # Evaluate the model on the test set
     test_stats = trainer._validate(test_loader)

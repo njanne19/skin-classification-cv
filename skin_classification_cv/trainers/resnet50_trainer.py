@@ -325,7 +325,7 @@ if __name__ == "__main__":
     trainer = SkinResNet50Trainer(skin_resnet50, None, test_loader, None)
     
     # Train the model 
-    trainer.k_fold_train(train_set, epochs=100, show=True, update_step=1, writer=writer)
+    # trainer.k_fold_train(train_set, epochs=100, show=True, update_step=1, writer=writer)
 
     # Load in the best model 
     skin_resnet50.load_state_dict(torch.load('./skin_classification_cv/models/resnet50/weights/best_model.pt'))
