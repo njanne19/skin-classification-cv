@@ -301,7 +301,7 @@ if __name__ == "__main__":
     generator = torch.Generator().manual_seed(42)
     
     # First load in HAM10000 and split datasets 
-    dataset = ImageNetDataset('datasets/HAM_10000') 
+    dataset = ImageNetDataset('datasets/HAM_10000', augment_factor=int(2)) 
     
     # Split the dataset into train, test, and validation sets
     # into 80%, 10%, and 10% respectively.
