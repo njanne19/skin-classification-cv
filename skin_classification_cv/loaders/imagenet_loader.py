@@ -6,9 +6,10 @@ import torch
 from torchvision import transforms
 from torch.utils.data import Dataset
 import numpy as np
+import fiftyone as fo
 
 class ImageNetDataset(Dataset):
-    def __init__(self, dir, metadata_file='HAM10000_metadata.csv', transform=None, augment_factor=int(1)):
+    def __init__(self, dir, metadata_file='HAM10000_metadata.csv', filename_column=1, label_column=2, transform=None, augment_factor=int(1)):
         """
         ImageNetDataset is an adapter class that loads images from 
         the downloaded dataset and adapts them to the standard ImageNet format 
@@ -31,6 +32,22 @@ class ImageNetDataset(Dataset):
             raise Exception(f'Metadata filepath ({metadata_filepath}) not found. Please check that the raw data directory is correct.')
        
         self.img_dir = dir
+        
+        # Get the column indices for the filename and label columns
+        self.filename_column = filename_column
+        self.label_column = label_column
+        
+        # Check to see if we need to append file extension 
+        file_extensions = ['.jpg', '.png', '.jpeg']
+        
+        # If the filename does not have an extension, set a flag 
+        self.file_extension = '.jpg'
+        for extension in file_extensions: 
+            if self.data_frame.iloc[0, self.filename_column].endswith(extension): 
+                self.file_extension = ''
+                break
+        
+        # Set up transform 
         self.transform = transform
 
         if self.transform is None:
@@ -62,8 +79,11 @@ class ImageNetDataset(Dataset):
         self.augment_factor = augment_factor
             
         # Get number of unique classes to vectorize labels
-        self.classes = self.data_frame.iloc[:, 2].unique()
+        self.classes = self.data_frame.iloc[:, self.label_column].unique()
         self.num_classes = len(self.classes)
+        
+        # Then construct fiftyone dataset object for visualization
+        self.construct_fiftyone_dataset() 
         
     def class_label_to_class_number(self, label):
         # Map the class label to the index number
@@ -85,9 +105,9 @@ class ImageNetDataset(Dataset):
         # Check to see if we're doing augmentation or not
         # This is normal mode
         if self.augment_factor == 1:
-            img_name = os.path.join(self.img_dir, (self.data_frame.iloc[idx, 1] + '.jpg'))
+            img_name = os.path.join(self.img_dir, (self.data_frame.iloc[idx, self.filename_column] + self.file_extension))
             image = Image.open(img_name).convert('RGB')
-            label = self.data_frame.iloc[idx, 2]
+            label = self.data_frame.iloc[idx, self.label_column]
 
             if self.transform:
                 image = self.transform(image)
@@ -99,9 +119,9 @@ class ImageNetDataset(Dataset):
             original_idx = idx % len(self.data_frame) 
 
             # Get the image name and label
-            img_name = os.path.join(self.img_dir, (self.data_frame.iloc[original_idx, 1] + '.jpg'))
+            img_name = os.path.join(self.img_dir, (self.data_frame.iloc[original_idx, self.filename_column] + self.file_extension))
             image = Image.open(img_name).convert('RGB')
-            label = self.data_frame.iloc[original_idx, 2]
+            label = self.data_frame.iloc[original_idx, self.label_column]
 
             # Apply the augmentation transform to images after the original index length
             if idx >= len(self.data_frame):
@@ -110,6 +130,32 @@ class ImageNetDataset(Dataset):
                 image = self.transform(image)
 
         return image, self.class_label_to_class_number(label)
+    
+
+    def construct_fiftyone_dataset(self): 
+        # Construct a fiftyone dataset object for visualization
+        # This does not include augmented images. 
+    
+        # Create a dataset object 
+        self.fo_dataset = fo.Dataset()
+        
+        # Then iterate through every image
+        for idx in range(len(self.data_frame)): 
+            
+            # Get the image name and label
+            img_name = os.path.join(self.img_dir, (self.data_frame.iloc[idx, self.filename_column] + self.file_extension))
+            label = self.data_frame.iloc[idx, self.label_column]
+            
+            # Add the sample to the dataset
+            new_sample = fo.Sample(filepath=img_name)
+            
+            # Then add label and metadata information 
+            new_sample['diagnosis'] = fo.Classification(label=label)
+            
+            self.fo_dataset.add_sample(new_sample)
+    
+        # At the end, compute metadata
+        self.fo_dataset.compute_metadata()
 
 
 if __name__ == "__main__": 
@@ -134,6 +180,11 @@ if __name__ == "__main__":
 
     # Create the dataset instance
     dataset = ImageNetDataset('datasets/HAM_10000')
+    # dataset = ImageNetDataset(
+    #     dir='datasets/ddidiversedermatologyimages',
+    #     metadata_file='ddi_metadata_clean.csv', 
+    #     filename_column=1, 
+    #     label_column=5)
 
     # Indexing an element
     img, label = dataset[0]  # Get the first image and label
@@ -155,6 +206,10 @@ if __name__ == "__main__":
         img, label = dataset[dataset_idx]
         ax = fig.add_subplot(1, 5, idx + 1, xticks=[], yticks=[])
         imshow(img, title=f"{dataset.class_number_to_class_label(label)}, {label}")
+        
+        
+    # Displaying the fiftyone dataset
+    session = fo.launch_app()
         
     # Hold the window open 
     plt.show()
