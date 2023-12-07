@@ -3,5 +3,7 @@ pandas
 torch
 torchvision
 torchsummary
+tensorboard
+tensorboardx
 matplotlib
 PyQt6
