@@ -7,6 +7,7 @@ from torchvision import transforms
 from torch.utils.data import Dataset
 import numpy as np
 import fiftyone as fo
+import cv2
 
 class ImageNetDataset(Dataset):
     def __init__(self, dir, metadata_file='HAM10000_metadata.csv', filename_column=1, label_column=2, transform=None, augment_factor=int(1)):
@@ -151,11 +152,34 @@ class ImageNetDataset(Dataset):
             
             # Then add label and metadata information 
             new_sample['diagnosis'] = fo.Classification(label=label)
+            new_sample['skin_tone_estimate'] = estimate_skin_tone(img_name)
             
             self.fo_dataset.add_sample(new_sample)
     
         # At the end, compute metadata
         self.fo_dataset.compute_metadata()
+        
+def estimate_skin_tone(image_path):
+    # Read the image
+    image = cv2.imread(image_path)
+
+    # Convert to YCbCr color space
+    ycbcr_image = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+
+    # Define the range for skin color in YCbCr
+    min_YCrCb = np.array([0, 133, 77], np.uint8)
+    max_YCrCb = np.array([255, 173, 127], np.uint8)
+
+    # Find skin region in the image
+    skin_region = cv2.inRange(ycbcr_image, min_YCrCb, max_YCrCb)
+
+    # Extract the Cr channel
+    Cr_channel = ycbcr_image[:,:,2]
+
+    # Calculate the average value of the Cr channel in the skin region
+    average_Cr = np.mean(Cr_channel[skin_region > 0])
+
+    return average_Cr if not np.isnan(average_Cr) else 0
 
 
 if __name__ == "__main__": 
@@ -179,12 +203,12 @@ if __name__ == "__main__":
         plt.pause(0.001)  # pause a bit so that plots are updated
 
     # Create the dataset instance
-    dataset = ImageNetDataset('datasets/HAM_10000')
-    # dataset = ImageNetDataset(
-    #     dir='datasets/ddidiversedermatologyimages',
-    #     metadata_file='ddi_metadata_clean.csv', 
-    #     filename_column=1, 
-    #     label_column=5)
+    # dataset = ImageNetDataset('datasets/HAM_10000')
+    dataset = ImageNetDataset(
+        dir='datasets/ddidiversedermatologyimages',
+        metadata_file='ddi_metadata_clean.csv', 
+        filename_column=1, 
+        label_column=5)
 
     # Indexing an element
     img, label = dataset[0]  # Get the first image and label
@@ -209,7 +233,8 @@ if __name__ == "__main__":
         
         
     # Displaying the fiftyone dataset
-    session = fo.launch_app()
+    tones = dataset.fo_dataset.sort_by("skin_tone_estimate", reverse=False)
+    session = fo.launch_app(view=tones)
         
     # Hold the window open 
     plt.show()
